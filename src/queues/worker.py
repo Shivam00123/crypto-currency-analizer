@@ -1,8 +1,11 @@
+from dotenv import load_dotenv
+load_dotenv()
+
+
 from pydantic import BaseModel
 import aiohttp
 from ..utils.endpoints import generate_crypto_price_endpoint
 from openai import OpenAI
-from dotenv import load_dotenv
 import json
 from ..utils.prompts import generate_system_prompts
 from typing import Optional
@@ -10,8 +13,8 @@ from langchain_openai import OpenAIEmbeddings
 from langchain_qdrant import QdrantVectorStore
 import asyncio
 from redis import Redis
+from ..mem import memory_client
 
-load_dotenv()
 
 
 client = OpenAI()
@@ -63,7 +66,7 @@ class Worker(BaseModel):
                 return price
             return None
 
-    async def process_user_query(self, user_query: str):
+    async def process_user_query(self, user_query: str,user_id:str):
         chunks = vector_db.similarity_search(query=user_query, k=3)
 
         context = "\n\n\n".join([
@@ -73,9 +76,19 @@ class Worker(BaseModel):
             for result in chunks
         ])
 
+        user_message_history = memory_client.search(user_id=user_id,query=user_query)
+
+        user_message_history_context=[]
+
+        if len(user_message_history) > 0:
+            user_message_history_context = [
+            f"{mem} ID:{mem.get('user_id')}\n memory:{mem.get('data')}"
+            for mem in user_message_history.get("results", [])
+]
+
         message_history = [
             {"role": "system", "content": generate_system_prompts(
-                context)}  # context
+                context,json.dumps(user_message_history_context))},  # context
         ]
 
         message_history.append({"role": "user", "content": user_query})
@@ -97,7 +110,10 @@ class Worker(BaseModel):
                     "get_crypto_price": self.get_crypto_price
                 }
 
-                print("obj",parsed_object)
+                memory_client.add(
+                    user_id=user_id,
+                    messages=message_history
+                )
 
                 if step == "START":
                     print("🔥", parsed_object.content)
@@ -117,14 +133,17 @@ class Worker(BaseModel):
                     message_history.append({"role": "developer", "content": json.dumps({
                         "step": "OBSERVE", "tool": parsed_object.tool, "output": tool_response
                     })})
-
+                    memory_client.add(
+                        user_id=user_id,
+                        messages=message_history
+                    )
                     continue
                 if step == "OUTPUT":
                     print("🤖", parsed_object.content)
                     return parsed_object.content
-                    break
 
 
-def helper_function(query: str):
+def helper_function(query: str,user_id:str="user_111d"):
     worker = Worker()
-    return asyncio.run(worker.process_user_query(query))
+    return asyncio.run(worker.process_user_query(query,user_id))
+#export OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES

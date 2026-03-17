@@ -11,9 +11,27 @@ def process_user_query(query:str = Query(...,description="User Query")):
     return {"status":"query added in queue","Job Id":job.id}
 
 @app.get("/job-result")
-def get_job_result(job_id:str = Query(...,description="Job id")):
-    print("=======" * 30,job_id)
-    job = queue.fetch_job(job_id=job_id)
-    result = job.return_value()
-    print(result)
-    return {"status":"result","result":result}
+def get_job_result(job_id: str = Query(...)):
+    job = queue.fetch_job(job_id)
+
+    if not job:
+        return {
+            "status": "error",
+            "message": "Job not found"
+        }
+
+    if job.is_finished:
+        return {
+            "status": "finished",
+            "result": job.return_value
+        }
+
+    if job.is_failed:
+        return {
+            "status": "failed",
+            "error": str(job.exc_info)
+        }
+
+    return {
+        "status": "in_progress"
+    }
